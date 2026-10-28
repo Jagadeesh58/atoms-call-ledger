@@ -2,6 +2,7 @@
   "seed": 7,
   "calls": 1000,
   "base_epoch": 1729000000.0,
+  "eval_offset_seconds": 3600,
   "ledger": {
     "M1": {
       "num": 689,
@@ -35,18 +36,18 @@
       "label": "Auth-malformed payloads retained"
     },
     "M7": {
-      "num": 133,
+      "num": 27,
       "denom": 155,
-      "label": "Injected losses flagged (recall)"
+      "label": "Injected losses detected (recall)"
     },
     "M8": {
-      "num": 60,
-      "denom": 133,
-      "label": "False alarms / flagged calls"
+      "num": 156,
+      "denom": 183,
+      "label": "False alarms / alert-state calls"
     },
     "M9": {
       "val": 86400.0,
-      "label": "Median remaining seconds at detection"
+      "label": "Median remaining seconds at first detection"
     },
     "M10": {
       "num": 2373,
@@ -57,6 +58,12 @@
       "num": 6,
       "denom": 6,
       "label": "Order independence (permutations)"
+    },
+    "_notes": {
+      "M7": "outage calls discovered via MOCK calls.list API diff; only OVERDUE_*/NEEDS_REVIEW count as alerted",
+      "M8": "AWAITING_ANALYTICS excluded (in-flight, not alert); only OVERDUE_*/NEEDS_REVIEW",
+      "M9": "remaining = call_anchor + retention_window - eval_now (real anchor from per-call timestamps)",
+      "discovery": "178 calls discovered via API diff (outage scenario)"
     }
   },
   "baseline": {
@@ -120,34 +127,34 @@
     {
       "grace_seconds": 60,
       "M7_recall": {
-        "num": 133,
+        "num": 27,
         "denom": 155
       },
-      "M8_false_alarms": 60
+      "M8_false_alarms": 156
     },
     {
       "grace_seconds": 300,
       "M7_recall": {
-        "num": 133,
+        "num": 27,
         "denom": 155
       },
-      "M8_false_alarms": 60
+      "M8_false_alarms": 156
     },
     {
       "grace_seconds": 600,
       "M7_recall": {
-        "num": 133,
+        "num": 27,
         "denom": 155
       },
-      "M8_false_alarms": 60
+      "M8_false_alarms": 156
     },
     {
       "grace_seconds": 1800,
       "M7_recall": {
-        "num": 133,
+        "num": 26,
         "denom": 155
       },
-      "M8_false_alarms": 60
+      "M8_false_alarms": 156
     }
   ],
   "fault_counts": {

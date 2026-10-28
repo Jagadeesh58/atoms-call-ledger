@@ -4,8 +4,8 @@
 
 > **Disclaimer**: This is an independent open-source project created by Jagadeesh and is **not affiliated with, endorsed by, or sponsored by Smallest.ai**.
 
-🌐 **Live Interactive Console**: [LIVE_DEMO_URL](LIVE_DEMO_URL) *(Human operator populates after verifying deployment)*  
-📦 **Repository**: [https://github.com/Jagadeesh58/atoms-call-ledger](https://github.com/Jagadeesh58/atoms-call-ledger)
+📦 **Repository**: [https://github.com/Jagadeesh58/atoms-call-ledger](https://github.com/Jagadeesh58/atoms-call-ledger)  
+🖥️ **Web Console**: Interactive dashboard available locally via `uvicorn app.main:app` or serverless via Vercel (`vercel deploy`).
 
 ---
 
@@ -75,11 +75,13 @@ Pasted verbatim from `eval/results/latest.json` (Seed `7`, 1,000 synthetic calls
 | **M4** | Valid payloads rejected | **225 / 2,570 (8.8%)** | 0 / 2,598 (0.0%) | Payloads with unconfigured secret or missing signature |
 | **M5** | Field normalization accuracy | **852 / 852 (100.0%)** | N/A / N/A (N/A) | Ground truth telephone & enum mappings verified |
 | **M6** | Auth-malformed payloads retained | **28 / 28 (100.0%)** | N/A / N/A (N/A) | Authenticated-but-corrupt JSON quarantined with raw bytes intact |
-| **M7** | Injected losses flagged (recall) | **133 / 155 (85.8%)** | 0 / N/A (N/A) | Calls with a dropped required event surfaced by reconcile |
-| **M8** | False alarms / flagged calls | **60 / 133 (45.1%)** | 0 / N/A (N/A) | Calls in-flight flagged as incomplete due to analytics grace |
-| **M9** | Median detection delay vs deadline | **86,400s** | N/A | Time remaining when loss was first surfaced (conservative anchor) |
+| **M7** | Injected losses detected (recall) | **27 / 155 (17.4%)** | 0 / N/A (N/A) | Calls in alerted states (`OVERDUE_*`, `NEEDS_REVIEW`) at evaluation snapshot |
+| **M8** | False alarms / alert-state calls | **156 / 183 (85.2%)** | 0 / N/A (N/A) | Calls in alert states whose delivered events were blocked by unconfigured secret |
+| **M9** | Median remaining seconds at detection | **86,400s** | N/A | Time remaining when loss was first surfaced (conservative anchor) |
 | **M10**| Byte-exact raw round trip | **2,373 / 2,373 (100.0%)** | N/A / N/A (N/A) | Stored raw BLOBs matching network bytes byte-for-byte |
 | **M11**| Order independence | **6 / 6 (100.0%)** | N/A / N/A (N/A) | All $3! = 6$ arrival permutations produce identical final state |
+
+*Note on M7/M8*: At the evaluation snapshot (T+1 hour), 55 calls with dropped analytics are still in-flight within their 600s grace window (`AWAITING_ANALYTICS`), and 73 calls with only `pre-conversation` received are within the 3,600s `MAX_CALL_SECONDS` window (`IN_PROGRESS`). Only actionable overdue states (`OVERDUE_POST`, `OVERDUE_ANALYTICS`) and `NEEDS_REVIEW` are counted as alerts. Outage calls with zero webhook deliveries are actively detected and registered via API call-listing diff.
 
 ---
 

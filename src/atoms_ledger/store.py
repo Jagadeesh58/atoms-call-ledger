@@ -11,7 +11,7 @@ from __future__ import annotations
 import sqlite3
 import threading
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS deliveries (
@@ -272,15 +272,148 @@ class LedgerStore:
     # ------------------------------------------------------------------
 
     def list_all_calls(self) -> List[str]:
-        """Return distinct call_ids across deliveries + events tables."""
+        """Return distinct call_ids across deliveries, events, anomalies, and backfill tables."""
         cur = self._conn.execute(
             """SELECT DISTINCT call_id FROM (
                 SELECT call_id FROM deliveries WHERE call_id IS NOT NULL
                 UNION
                 SELECT call_id FROM events WHERE call_id IS NOT NULL
+                UNION
+                SELECT call_id FROM anomalies WHERE call_id IS NOT NULL
+                UNION
+                SELECT call_id FROM backfill WHERE call_id IS NOT NULL
             ) ORDER BY call_id"""
         )
         return [row[0] for row in cur.fetchall()]
+
+    def ingest_delivery_atomic(
+        self,
+        received_at: str,
+        raw_bytes_or_none: Optional[bytes],
+        sha256: str,
+        sig_ok: int,
+        call_id: Optional[str],
+        event_type: Optional[str],
+        delivery_id: Optional[str],
+        normalized_json: Optional[str],
+        outcome: str,
+        note: Optional[str] = None,
+        anomaly_kind: Optional[str] = None,
+        anomaly_detail: Optional[str] = None,
+    ) -> Tuple[int, str]:
+        """
+        Atomically persist delivery, normalized event, and anomaly in a single SQLite transaction.
+
+        Guarantees:
+          - No intermediate placeholder state (e.g. normalized_json='{}')
+          - Deduplication: identical sha256 -> duplicate; differing sha256 -> conflict
+          - All-or-nothing commit: crash between delivery write and event write is impossible
+        """
+        raw = raw_bytes_or_none if sig_ok == 1 else None
+        with self._lock:
+            final_outcome = outcome
+
+            # Check deduplication / conflict if valid authenticated event
+            if sig_ok == 1 and call_id and event_type and normalized_json is not None:
+                cur = self._conn.execute(
+                    "SELECT payload_sha256 FROM events WHERE call_id = ? AND event_type = ?",
+                    (call_id, event_type),
+                )
+                existing = cur.fetchone()
+                if existing is not None:
+                    stored_sha = existing[0]
+                    if stored_sha == sha256:
+                        final_outcome = "duplicate"
+                    else:
+                        final_outcome = "conflict"
+                        self._conn.execute(
+                            "INSERT INTO anomalies (call_id, kind, detail, at) VALUES (?, ?, ?, ?)",
+                            (
+                                call_id,
+                                "duplicate_conflict",
+                                f"event_type={event_type} stored_sha={stored_sha[:8]} new_sha={sha256[:8]}",
+                                received_at,
+                            ),
+                        )
+                else:
+                    final_outcome = "accepted"
+
+            # Insert delivery record
+            cur_deliv = self._conn.execute(
+                """INSERT INTO deliveries
+                   (received_at, raw, sha256, sig_ok, outcome, call_id, event_type, delivery_id, note)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    received_at,
+                    raw,
+                    sha256,
+                    sig_ok,
+                    final_outcome,
+                    call_id,
+                    event_type,
+                    delivery_id,
+                    note,
+                ),
+            )
+            deliv_id = cur_deliv.lastrowid
+
+            # Insert canonical event row directly with real normalized JSON
+            if (
+                final_outcome == "accepted"
+                and call_id
+                and event_type
+                and normalized_json is not None
+            ):
+                self._conn.execute(
+                    """INSERT INTO events
+                       (call_id, event_type, delivery_row, payload_sha256, normalized_json, received_at)
+                       VALUES (?, ?, ?, ?, ?, ?)""",
+                    (call_id, event_type, deliv_id, sha256, normalized_json, received_at),
+                )
+
+            # Insert anomaly if requested
+            if anomaly_kind:
+                self._conn.execute(
+                    "INSERT INTO anomalies (call_id, kind, detail, at) VALUES (?, ?, ?, ?)",
+                    (call_id, anomaly_kind, anomaly_detail, received_at),
+                )
+
+            self._conn.commit()
+            return deliv_id, final_outcome
+
+    def insert_discovered_call(
+        self, call_id: str, discovered_at: str, note: Optional[str] = None
+    ) -> int:
+        """Register a call discovered via Atoms calls.list API diff that had zero webhook deliveries."""
+        with self._lock:
+            cur = self._conn.execute(
+                """INSERT INTO deliveries
+                   (received_at, raw, sha256, sig_ok, outcome, call_id, event_type, delivery_id, note)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    discovered_at,
+                    None,
+                    "discovered_api",
+                    1,
+                    "discovered_missing",
+                    call_id,
+                    None,
+                    None,
+                    note or "Discovered via Atoms call listing API diff; missing from webhooks",
+                ),
+            )
+            deliv_id = cur.lastrowid
+            self._conn.execute(
+                "INSERT INTO anomalies (call_id, kind, detail, at) VALUES (?, ?, ?, ?)",
+                (
+                    call_id,
+                    "discovered_missing",
+                    note or "Discovered via Atoms calls.list API during outage reconciliation",
+                    discovered_at,
+                ),
+            )
+            self._conn.commit()
+            return deliv_id
 
     def close(self) -> None:
         self._conn.close()

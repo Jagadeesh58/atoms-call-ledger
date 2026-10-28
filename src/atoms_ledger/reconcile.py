@@ -9,6 +9,7 @@ Must be a pure function of DB state + config + now; must never mutate state.
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime, timezone
 from typing import List, Optional
 
@@ -23,6 +24,7 @@ STATE_AWAITING_ANALYTICS = "AWAITING_ANALYTICS"
 STATE_OVERDUE_ANALYTICS = "OVERDUE_ANALYTICS"
 STATE_OVERDUE_POST = "OVERDUE_POST"
 STATE_QUARANTINED_ONLY = "QUARANTINED_ONLY"
+STATE_NEEDS_REVIEW = "NEEDS_REVIEW"
 
 # Risk tier labels
 RISK_OK = "OK"
@@ -34,6 +36,31 @@ RISK_EXPIRED = "EXPIRED"
 PRE = "pre-conversation"
 POST = "post-conversation"
 ANALYTICS = "analytics-completed"
+
+# Status validation sets
+TERMINAL_NON_ANALYTICS_STATUSES = {
+    "busy",
+    "failed",
+    "canceled",
+    "cancelled",
+    "no_answer",
+    "no-answer",
+}
+KNOWN_RECONCILE_STATUSES = {
+    "completed",
+    "busy",
+    "failed",
+    "canceled",
+    "cancelled",
+    "no_answer",
+    "no-answer",
+    "in_progress",
+    "in-progress",
+    "pending",
+    "in_queue",
+    "processing",
+    "active",
+}
 
 
 def _risk_tier(remaining: float, window: int) -> str:
@@ -102,18 +129,24 @@ def _evaluate_call(
     backfill_row = store.get_backfill(call_id)
     _anomalies = store.get_anomalies_for_call(call_id)  # noqa: F841 (available for future use)
 
+    raw_deliveries_list = [dict(d) for d in deliveries]
+    is_discovered_missing = any(
+        d.get("outcome") == "discovered_missing" for d in raw_deliveries_list
+    )
+
     # ----------------------------------------------------------------
     # Check for QUARANTINED_ONLY: only quarantined deliveries, no events
+    # Skip if this call was discovered via API diff (it genuinely has no webhooks)
     # ----------------------------------------------------------------
     has_events = len(event_rows) > 0
     has_quarantine_deliveries = any(d.get("outcome") == "quarantined" for d in deliveries)
 
-    if not has_events and has_quarantine_deliveries:
+    if not has_events and not is_discovered_missing and has_quarantine_deliveries:
         view = CallView(call_id=call_id, state=STATE_QUARANTINED_ONLY)
         view.backfill_state = backfill_row["state"] if backfill_row else None
         return view
 
-    if not has_events:
+    if not has_events and not is_discovered_missing:
         # Deliveries reference this call (e.g. rejected_signature) but no events
         view = CallView(call_id=call_id, state=STATE_QUARANTINED_ONLY)
         view.backfill_state = backfill_row["state"] if backfill_row else None
@@ -124,7 +157,6 @@ def _evaluate_call(
     # ----------------------------------------------------------------
     normalized_by_type: dict[str, NormalizedEvent] = {}
     latest_agent_id: Optional[str] = None
-    raw_deliveries_list = [dict(d) for d in deliveries]
 
     for row in event_rows:
         ne = _parse_normalized(row["normalized_json"])
@@ -142,15 +174,27 @@ def _evaluate_call(
     # Determine call status (from post or pre event, fallback unknown)
     # ----------------------------------------------------------------
     call_status: Optional[str] = None
+    has_unknown_status_flag = False
     for et in (POST, ANALYTICS, PRE):
         ne = normalized_by_type.get(et)
-        if ne and ne.status:
-            call_status = ne.status
-            break
+        if ne:
+            if "status_unknown" in ne.flags:
+                has_unknown_status_flag = True
+            if ne.status and call_status is None:
+                call_status = ne.status
 
-    # ----------------------------------------------------------------
+    is_unknown_status = False
+    if call_status is not None:
+        if call_status.lower() not in KNOWN_RECONCILE_STATUSES:
+            is_unknown_status = True
+    elif has_post:
+        # Post event delivered without any recognizable status field
+        is_unknown_status = True
+
+    if has_unknown_status_flag:
+        is_unknown_status = True
+
     # Determine if analytics is required for this call
-    # ----------------------------------------------------------------
     analytics_required = call_status in config.analytics_expected_statuses
 
     # ----------------------------------------------------------------
@@ -167,6 +211,16 @@ def _evaluate_call(
             ts_candidates.append(ne.answered_at.timestamp())
         if ne.ended_at:
             ts_candidates.append(ne.ended_at.timestamp())
+    for d in raw_deliveries_list:
+        try:
+            ts_candidates.append(datetime.fromisoformat(d["received_at"]).timestamp())
+        except Exception:
+            pass
+    # Parse timestamp from call_id if no timestamps found (CALL-<13-digit-epoch>-<suffix>)
+    if not ts_candidates:
+        m = re.search(r"CALL-(\d{13})-", call_id)
+        if m:
+            ts_candidates.append(int(m.group(1)) / 1000.0)
 
     anchor_ts = _earliest_ts(*ts_candidates)
     if anchor_ts is not None and anchor_ts > now_ts:
@@ -187,13 +241,26 @@ def _evaluate_call(
     flags: List[str] = []
     state: str
 
+    # is_discovered_missing computed at top of function
+
     # Check if recovered via API backfill
     if backfill_row and backfill_row.get("state") == "RECOVERED":
         state = STATE_COMPLETE
+    elif is_unknown_status:
+        flags.append("unknown_status")
+        state = STATE_NEEDS_REVIEW
+    elif is_discovered_missing and not has_post:
+        # Discovered via platform API; webhooks completely missed
+        state = STATE_OVERDUE_POST
     elif has_post and (not analytics_required or has_analytics):
-        state = STATE_COMPLETE
-        if not has_pre:
-            flags.append("pre_missing")
+        if not analytics_required and call_status not in TERMINAL_NON_ANALYTICS_STATUSES:
+            # Unrecognized status outside terminal non-analytics set -> needs review
+            flags.append("unknown_status")
+            state = STATE_NEEDS_REVIEW
+        else:
+            state = STATE_COMPLETE
+            if not has_pre:
+                flags.append("pre_missing")
     elif has_pre and not has_post:
         # Only pre received
         if call_age <= config.max_call_seconds:
@@ -246,7 +313,7 @@ def _evaluate_call(
         remaining_seconds=remaining,
         events_received=events_received,
         missing_required_events=_compute_missing(
-            has_pre, has_post, has_analytics, analytics_required
+            has_pre, has_post, has_analytics, analytics_required, is_discovered_missing
         ),
         flags=flags,
         from_number=ne_primary.from_number if ne_primary else None,
@@ -269,9 +336,10 @@ def _compute_missing(
     has_post: bool,
     has_analytics: bool,
     analytics_required: bool,
+    is_discovered_missing: bool = False,
 ) -> List[str]:
     missing = []
-    if not has_post:
+    if not has_post or is_discovered_missing:
         missing.append(POST)
     if analytics_required and not has_analytics:
         missing.append(ANALYTICS)

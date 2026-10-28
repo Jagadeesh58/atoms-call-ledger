@@ -156,16 +156,22 @@ def test_raw_persisted_before_result_returned() -> None:
     class OrderCapturingStore(LedgerStore):
         ops: list[str] = []
 
-        def insert_delivery(self, *args, **kwargs) -> int:  # type: ignore[override]
-            OrderCapturingStore.ops.append("insert_delivery")
-            return super().insert_delivery(*args, **kwargs)
+        def ingest_delivery_atomic(self, *args, **kwargs):
+            OrderCapturingStore.ops.append("ingest_delivery_atomic")
+            return super().ingest_delivery_atomic(*args, **kwargs)
 
     store = OrderCapturingStore()
     body = _valid_payload()
     result = handle(body, _headers(body), _config(), store, _now())
     assert result.outcome == "accepted"
-    # insert_delivery must be first op (before normalization result returned)
-    assert OrderCapturingStore.ops[0] == "insert_delivery"
+    # Ingest must commit delivery and canonical event atomically before result is returned
+    assert OrderCapturingStore.ops[0] == "ingest_delivery_atomic"
+
+    # Verify event stored directly with real normalized json (no empty placeholder)
+    ev = store.get_event("CALL-1729000000000-abcdef", "post-conversation")
+    assert ev is not None
+    assert ev["normalized_json"] != "{}"
+    assert "status" in ev["normalized_json"]
 
 
 # ---------------------------------------------------------------------------

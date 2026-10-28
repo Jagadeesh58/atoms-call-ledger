@@ -113,7 +113,7 @@ class CallView:
 
     call_id: str
     agent_id: Optional[str] = None
-    state: str = "IN_PROGRESS"  # COMPLETE, IN_PROGRESS, AWAITING_ANALYTICS, OVERDUE_ANALYTICS, OVERDUE_POST, QUARANTINED_ONLY
+    state: str = "IN_PROGRESS"  # COMPLETE, IN_PROGRESS, AWAITING_ANALYTICS, OVERDUE_ANALYTICS, OVERDUE_POST, QUARANTINED_ONLY, NEEDS_REVIEW
     risk_tier: str = "OK"  # OK, WARNING, CRITICAL, EXPIRED
     anchor_at: Optional[datetime] = None
     deadline_at: Optional[datetime] = None

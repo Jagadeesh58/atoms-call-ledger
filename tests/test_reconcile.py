@@ -346,3 +346,27 @@ def test_evaluate_multiple_calls() -> None:
     view_b = next(v for v in views if v.call_id == "CALL-B")
     assert view_a.state == STATE_COMPLETE
     assert view_b.state == STATE_IN_PROGRESS
+
+
+def test_unknown_status_transitions_to_needs_review() -> None:
+    """A call with an unrecognized status must transition to NEEDS_REVIEW instead of COMPLETE."""
+    from atoms_ledger.reconcile import STATE_NEEDS_REVIEW
+
+    store = LedgerStore()
+    _insert_event(store, "CALL-WEIRD", "post-conversation", status="interrupted_by_carrier")
+    views = evaluate(store, _config(), _now())
+    assert len(views) == 1
+    assert views[0].state == STATE_NEEDS_REVIEW
+    assert "unknown_status" in views[0].flags
+
+
+def test_discovered_missing_outage_call_marked_overdue() -> None:
+    """A call discovered via Atoms API diff with no webhooks must be flagged as OVERDUE_POST."""
+    from atoms_ledger.reconcile import STATE_OVERDUE_POST
+
+    store = LedgerStore()
+    store.insert_discovered_call("CALL-1729000000000-outage", _now().isoformat())
+    views = evaluate(store, _config(), _now(offset=7200))
+    assert len(views) == 1
+    assert views[0].state == STATE_OVERDUE_POST
+    assert "post-conversation" in views[0].missing_required_events

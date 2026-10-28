@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from atoms_ledger.config import LedgerConfig
@@ -61,14 +61,39 @@ class MockAtomsClient:
         behavior: str = "success",
         fail_call_ids: Optional[list] = None,
         call_data_overrides: Optional[Dict[str, Any]] = None,
+        platform_calls: Optional[List[str]] = None,
     ) -> None:
         # MOCK behaviors: success, not_found, timeout, rate_limit, auth_error
         self._behavior = behavior
         self._fail_call_ids = fail_call_ids or []
         self._call_data_overrides = call_data_overrides or {}
+        self._platform_calls = platform_calls or []
         self._call_count: int = 0
         # Expose atoms.calls interface identical to SmallestAI SDK shape
         self.atoms = _MockAtoms(self)
+
+
+class _MockCallLogItem:
+    """MOCK: Simulates ListCallsResponseDataLogsItem."""
+
+    def __init__(self, call_id: str, status: str = "completed") -> None:
+        self.call_id = call_id
+        self.status = status
+
+
+class _MockListCallsResponseData:
+    """MOCK: Simulates ListCallsResponseData."""
+
+    def __init__(self, logs: List[_MockCallLogItem]) -> None:
+        self.logs = logs
+
+
+class _MockListCallsResponse:
+    """MOCK: Simulates ListCallsResponse."""
+
+    def __init__(self, logs: List[_MockCallLogItem]) -> None:
+        self.status = True
+        self.data = _MockListCallsResponseData(logs)
 
 
 class _MockGetCallsResponse:
@@ -126,6 +151,17 @@ class _MockCalls:
             raise _MockAPIError(401, "unauthorized")
         else:
             raise ValueError(f"MOCK: unknown behavior {behavior!r}")
+
+    def list(self, **kwargs) -> _MockListCallsResponse:
+        """MOCK: Returns simulated API call listing response."""
+        self._client._call_count += 1
+        if self._client._behavior == "auth_error":
+            raise _MockAPIError(401, "unauthorized")
+        if self._client._behavior == "timeout":
+            raise _MockAPIError(0, "timeout")
+
+        logs = [_MockCallLogItem(cid, status="completed") for cid in self._client._platform_calls]
+        return _MockListCallsResponse(logs)
 
 
 class _MockAtoms:
@@ -241,7 +277,7 @@ def _fetch_one(
             recovered_data = _response_to_dict(response)
             recovered_json = json.dumps(recovered_data)
 
-            now_iso = datetime.utcnow().isoformat()
+            now_iso = datetime.now(timezone.utc).isoformat()
             backfill_row = store.get_backfill(task.call_id)
             prior_attempts = backfill_row["attempts"] if backfill_row else 0
 
@@ -267,7 +303,7 @@ def _fetch_one(
                     state=RESULT_CONFIG_ERROR,
                     attempts=attempt,
                     last_error=last_error,
-                    last_attempt_at=datetime.utcnow().isoformat(),
+                    last_attempt_at=datetime.now(timezone.utc).isoformat(),
                     recovered_json=None,
                 )
                 return RESULT_CONFIG_ERROR
@@ -279,7 +315,7 @@ def _fetch_one(
                     state=RESULT_UNRECOVERABLE,
                     attempts=attempt,
                     last_error=last_error,
-                    last_attempt_at=datetime.utcnow().isoformat(),
+                    last_attempt_at=datetime.now(timezone.utc).isoformat(),
                     recovered_json=None,
                 )
                 return RESULT_UNRECOVERABLE
@@ -295,7 +331,7 @@ def _fetch_one(
         state=RESULT_RETRY_LATER,
         attempts=attempt,
         last_error=last_error,
-        last_attempt_at=datetime.utcnow().isoformat(),
+        last_attempt_at=datetime.now(timezone.utc).isoformat(),
         recovered_json=None,
     )
     return RESULT_RETRY_LATER
@@ -324,3 +360,71 @@ def _response_to_dict(response: Any) -> Dict[str, Any]:
         "recording_dual_url": getattr(data, "recording_dual_url", None),
     }
     return result
+
+
+# ---------------------------------------------------------------------------
+# Outage Call Discovery
+# ---------------------------------------------------------------------------
+
+
+def discover_calls(
+    client: Any,
+    store: LedgerStore,
+    config: LedgerConfig,
+    date_from: Optional[datetime] = None,
+    date_to: Optional[datetime] = None,
+    now: Optional[datetime] = None,
+) -> List[str]:
+    """
+    Discover calls present on the Atoms platform but absent from the ledger.
+
+    Solves the receiver-outage failure mode: when a network or receiver outage
+    causes Atoms webhooks to be dropped, the ledger receives zero events for those calls.
+    By polling the Atoms call-listing API (client.atoms.calls.list)
+    and computing the set difference against stored calls, the ledger discovers these
+    unreceived calls before their ZDR retention deadline expires.
+
+    Discovered calls are registered in the store with an anomaly and delivery row
+    so that reconciliation marks them OVERDUE_POST and schedules API backfill.
+
+    Returns:
+        List of newly discovered missing call IDs.
+    """
+    if now is None:
+        now = datetime.now(timezone.utc)
+    discovered_at = now.isoformat()
+
+    try:
+        # SmallestAI SDK Call listing (GET /atoms/v1/calls)
+        response = client.atoms.calls.list(date_from=date_from, date_to=date_to, limit=100)
+    except Exception as exc:
+        store.insert_anomaly(
+            call_id=None,
+            kind="discovery_api_error",
+            detail=str(exc),
+            at=discovered_at,
+        )
+        return []
+
+    # Extract platform call logs
+    platform_calls: List[str] = []
+    if hasattr(response, "data") and response.data:
+        logs = getattr(response.data, "logs", []) or []
+        for item in logs:
+            cid = getattr(item, "call_id", None) or getattr(item, "callId", None)
+            if not cid and isinstance(item, dict):
+                cid = item.get("call_id") or item.get("callId")
+            if cid:
+                platform_calls.append(str(cid).strip())
+
+    existing_calls = set(store.list_all_calls())
+    missing_cids = [cid for cid in platform_calls if cid not in existing_calls]
+
+    for cid in missing_cids:
+        store.insert_discovered_call(
+            call_id=cid,
+            discovered_at=discovered_at,
+            note="Discovered via Atoms calls.list API during outage reconciliation",
+        )
+
+    return missing_cids
