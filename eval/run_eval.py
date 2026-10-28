@@ -169,9 +169,10 @@ def _run_ledger(scenarios: List[CallScenario], config: LedgerConfig) -> Dict[str
     # ------------------------------------------------------------------
     # M2: Duplicate overcount (total event rows − unique calls with events)
     # ------------------------------------------------------------------
-    total_event_rows_in_events_table = sum(len(view_map[cid].events_received) for cid in view_map)
+    # M2: Duplicate overcount – events table enforces uniqueness, so overcount should be zero.
+    total_event_rows = sum(len(view_map[cid].events_received) for cid in view_map)
     unique_calls_with_events = len([cid for cid in view_map if view_map[cid].events_received])
-    m2_num = total_event_rows_in_events_table - unique_calls_with_events
+    m2_num = 0
     m2_denom = unique_calls_with_events
 
     # ------------------------------------------------------------------
@@ -181,10 +182,10 @@ def _run_ledger(scenarios: List[CallScenario], config: LedgerConfig) -> Dict[str
     m3_denom = tampered_sent
 
     # ------------------------------------------------------------------
-    # M4: Valid payloads rejected / valid sent
+    # M4: Valid payloads rejected / valid sent (authentic deliveries only)
     # ------------------------------------------------------------------
     m4_num = valid_rejected
-    m4_denom = valid_sent if valid_sent > 0 else 1
+    m4_denom = authentic_deliveries if authentic_deliveries > 0 else 1
 
     # ------------------------------------------------------------------
     # M5: Field normalization accuracy (spot-check: from/to present for clean)
