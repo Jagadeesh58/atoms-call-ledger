@@ -1,0 +1,9 @@
+ruff>=0.8.0
+pytest>=8.0.0
+pytest-cov>=5.0.0
+smallestai>=5.14.0
+fastapi>=0.115.0
+uvicorn>=0.32.0
+httpx>=0.28.0
+jinja2>=3.1.0
+python-multipart>=0.0.18
