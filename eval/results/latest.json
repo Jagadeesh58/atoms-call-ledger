@@ -1,0 +1,171 @@
+{
+  "seed": 7,
+  "calls": 1000,
+  "base_epoch": 1729000000.0,
+  "ledger": {
+    "M1": {
+      "num": 689,
+      "denom": 830,
+      "label": "Complete call records"
+    },
+    "M2": {
+      "num": 1436,
+      "denom": 822,
+      "label": "Duplicate overcount"
+    },
+    "M3": {
+      "num": 0,
+      "denom": 53,
+      "label": "Tampered payloads accepted",
+      "by_construction": true
+    },
+    "M4": {
+      "num": 225,
+      "denom": 2570,
+      "label": "Valid payloads rejected"
+    },
+    "M5": {
+      "num": 852,
+      "denom": 852,
+      "label": "Field normalization accuracy"
+    },
+    "M6": {
+      "num": 28,
+      "denom": 28,
+      "label": "Auth-malformed payloads retained"
+    },
+    "M7": {
+      "num": 133,
+      "denom": 155,
+      "label": "Injected losses flagged (recall)"
+    },
+    "M8": {
+      "num": 60,
+      "denom": 133,
+      "label": "False alarms / flagged calls"
+    },
+    "M9": {
+      "val": 86400.0,
+      "label": "Median remaining seconds at detection"
+    },
+    "M10": {
+      "num": 2373,
+      "denom": 2373,
+      "label": "Byte-exact raw round trip"
+    },
+    "M11": {
+      "num": 6,
+      "denom": 6,
+      "label": "Order independence (permutations)"
+    }
+  },
+  "baseline": {
+    "M1": {
+      "num": "N/A",
+      "denom": "N/A",
+      "label": "Complete call records (no state tracking)"
+    },
+    "M2": {
+      "num": 1754,
+      "denom": 897,
+      "label": "Duplicate overcount"
+    },
+    "M3": {
+      "num": 53,
+      "denom": 53,
+      "label": "Tampered payloads accepted",
+      "by_construction": true
+    },
+    "M4": {
+      "num": 0,
+      "denom": 2598,
+      "label": "Valid payloads rejected (never rejects)"
+    },
+    "M5": {
+      "num": "N/A",
+      "denom": "N/A",
+      "label": "No normalization"
+    },
+    "M6": {
+      "num": "N/A",
+      "denom": "N/A",
+      "label": "No quarantine"
+    },
+    "M7": {
+      "num": 0,
+      "denom": "N/A",
+      "label": "Injected losses flagged (no reconcile)"
+    },
+    "M8": {
+      "num": 0,
+      "denom": "N/A",
+      "label": "False alarms (no reconcile)"
+    },
+    "M9": {
+      "val": null,
+      "label": "N/A (no reconcile)"
+    },
+    "M10": {
+      "num": "N/A",
+      "denom": "N/A",
+      "label": "No raw persistence"
+    },
+    "M11": {
+      "num": "N/A",
+      "denom": "N/A",
+      "label": "No order-independence guarantee"
+    }
+  },
+  "grace_sweep": [
+    {
+      "grace_seconds": 60,
+      "M7_recall": {
+        "num": 133,
+        "denom": 155
+      },
+      "M8_false_alarms": 60
+    },
+    {
+      "grace_seconds": 300,
+      "M7_recall": {
+        "num": 133,
+        "denom": 155
+      },
+      "M8_false_alarms": 60
+    },
+    {
+      "grace_seconds": 600,
+      "M7_recall": {
+        "num": 133,
+        "denom": 155
+      },
+      "M8_false_alarms": 60
+    },
+    {
+      "grace_seconds": 1800,
+      "M7_recall": {
+        "num": 133,
+        "denom": 155
+      },
+      "M8_false_alarms": 60
+    }
+  ],
+  "fault_counts": {
+    "clean": 394,
+    "unicode_content": 24,
+    "dropped_pre": 50,
+    "dropped_analytics": 60,
+    "schema_drift": 32,
+    "tampered_body": 53,
+    "dropped_post": 73,
+    "duplicate_conflict": 45,
+    "authenticated_malformed": 28,
+    "out_of_order": 52,
+    "wrong_secret": 46,
+    "duplicate_identical": 42,
+    "missing_signature": 29,
+    "no_answer_status": 25,
+    "outage_window": 22,
+    "large_transcript": 25
+  }
+}
