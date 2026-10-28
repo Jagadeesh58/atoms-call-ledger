@@ -124,7 +124,6 @@ def _run_ledger(scenarios: List[CallScenario], config: LedgerConfig) -> Dict[str
     valid_rejected = counters["valid_rejected"]
     authenticated_malformed_sent = counters["malformed_sent"]
     authenticated_malformed_retained = counters["malformed_retained"]
-    valid_sent = authentic_deliveries + valid_rejected
 
     # Evaluation time: 1 hour after base epoch
     eval_now = datetime.fromtimestamp(BASE_EPOCH + EVAL_OFFSET_SECONDS, tz=timezone.utc)
@@ -170,7 +169,6 @@ def _run_ledger(scenarios: List[CallScenario], config: LedgerConfig) -> Dict[str
     # M2: Duplicate overcount (total event rows − unique calls with events)
     # ------------------------------------------------------------------
     # M2: Duplicate overcount – events table enforces uniqueness, so overcount should be zero.
-    total_event_rows = sum(len(view_map[cid].events_received) for cid in view_map)
     unique_calls_with_events = len([cid for cid in view_map if view_map[cid].events_received])
     m2_num = 0
     m2_denom = unique_calls_with_events
