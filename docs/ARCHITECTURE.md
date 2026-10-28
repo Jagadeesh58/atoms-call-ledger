@@ -32,7 +32,7 @@ flowchart TD
     end
 
     subgraph Interactive Applications
-        App["Streamlit / Vercel App"] --> Generate["fixtures.generate\n(Seeded Synthetic Faults)"]
+        App["FastAPI / Vercel Web Console"] --> Generate["fixtures.generate\n(Seeded Synthetic Faults)"]
         Generate --> Handle
         App --> Baseline["eval.baseline\n(Deliberately Naive Handler)"]
         App --> Views["Side-by-Side Comparison & Ledger UI"]
@@ -44,15 +44,15 @@ flowchart TD
 ## 1. Architectural Components
 
 ### 1.1 Webhook Receiver (`receiver/app.py` & `api/index.py`)
-A lightweight, stateless ASGI service implemented in FastAPI. Its sole responsibility is accepting incoming HTTP POST requests, immediately streaming the exact unparsed byte payload into memory via `await request.body()`, and invoking the ingestion engine. It never parses JSON before signature validation. If the local storage tier throws an unexpected exception, it immediately spools the base64-encoded payload to a durable disk spool (`spool.jsonl`) and returns HTTP 503, ensuring zero silent drops.
+A lightweight ASGI service implemented in FastAPI. Its sole responsibility is accepting incoming HTTP POST requests, immediately streaming the exact unparsed byte payload into memory via `await request.body()`, and offloading the synchronous persist-before-ack ingestion pipeline to a worker thread via `asyncio.to_thread` to prevent event-loop blocking. It fails closed on startup in production unless valid secrets and a durable database path are provided. If the local storage tier throws an unexpected exception, it validates the HMAC signature before spooling the base64-encoded payload to a durable disk spool (`spool.jsonl`), strictly guaranteeing that unauthenticated payloads are never written to disk. Replay is handled via `scripts/replay_spool.py`.
 
 ### 1.2 Cryptographic Ingestion Engine (`src/atoms_ledger/signature.py` & `ingest.py`)
 Enforces the **persist-before-ack** guarantee.
 1. Inspects raw payload size against `MAX_BODY_BYTES` (10 MB).
 2. Performs constant-time HMAC-SHA256 comparison (`hmac.compare_digest`) against configured secrets to support key rotation without downtime.
-3. Authenticated payloads are persisted to the `deliveries` table **before** JSON parsing or downstream business logic executes.
+3. Authenticated payloads are normalized and persisted atomically with delivery metadata in a single SQLite transaction (`store.ingest_delivery_atomic`), preventing any intermediate placeholder states (`{}`).
 4. Authenticated-but-unparseable JSON is quarantined with raw bytes intact and acknowledged with HTTP 200 (since Atoms does not retry).
-5. Unauthenticated payloads are rejected with HTTP 401, persisting only the SHA256 hash and rejection reason—never the untrusted body bytes.
+5. Unauthenticated payloads are rejected with HTTP 401; audit writes to the deliveries table are throttled by an in-memory sliding-window limiter to prevent SQLite write-lock starvation during attack traffic. Untrusted raw body bytes are never stored.
 
 ### 1.3 Defensive Normalizer (`src/atoms_ledger/normalize.py`)
 Insulates customer business logic from documented Atoms schema drifts and casing variations:
@@ -71,7 +71,7 @@ Thread-safe SQLite storage using the standard library. Implements:
 
 ### 1.5 Reconciliation & Retention Risk Engine (`src/atoms_ledger/reconcile.py`)
 A pure mathematical state function `evaluate(store, config, now) -> List[CallView]`.
-Evaluates the lifecycle state (`COMPLETE`, `IN_PROGRESS`, `AWAITING_ANALYTICS`, `OVERDUE_ANALYTICS`, `OVERDUE_POST`, `QUARANTINED_ONLY`) and computes the Zero Data Retention countdown:
+Evaluates the lifecycle state (`COMPLETE`, `IN_PROGRESS`, `AWAITING_ANALYTICS`, `OVERDUE_ANALYTICS`, `OVERDUE_POST`, `QUARANTINED_ONLY`, `NEEDS_REVIEW`) and computes the Zero Data Retention countdown:
 $$\text{deadline} = \min(\text{timestamps}) + \text{RETENTION\_WINDOW\_SECONDS}$$
 $$\text{remaining} = \text{deadline} - \text{now}$$
 Assigns risk tiers:
@@ -79,6 +79,8 @@ Assigns risk tiers:
 - `CRITICAL`: $\text{remaining} \le \min(3600, 10\%\text{ window})$
 - `WARNING`: $\text{remaining} \le 50\%\text{ window}$
 - `OK`: otherwise
+
+Unrecognized call statuses transition to `NEEDS_REVIEW`. Unreceived calls caused by network or receiver outages are actively discovered via call-listing diff against the Atoms platform API (`client.atoms.calls.list`) and flagged as `OVERDUE_POST` for backfill recovery.
 
 ### 1.6 Backfill Planner & Executor (`src/atoms_ledger/backfill.py`)
 Orders at-risk calls by urgency (least remaining time first) and batches them in chunks of $\le 100$ IDs to respect official `search_calls` limits. Interacts with the official `smallestai` SDK client (`client.atoms.calls.get`). Presigned recording URLs are flagged with a 15-minute expiration note and are never cached.
@@ -103,3 +105,7 @@ This prototype is intentionally minimal and deterministic. When scaling from hun
 ### 2.3 Single-Region Outage Hazard
 - **Failure Mode**: If the receiver service experiences a regional datacenter outage exceeding the customer's configured ZDR window (e.g., a 1-hour window during a 90-minute regional incident), voice-agent content is permanently purged from Smallest.ai infrastructure and cannot be recovered.
 - **Production Remedy**: Multi-region active-active ingress endpoints with latency-based DNS routing or global anycast IP routing.
+
+### 2.4 Ephemeral Serverless Sandbox vs Stateful Production Durability
+- **Failure Mode**: Running SQLite in-memory (`:memory:`) inside an ephemeral serverless environment (such as Vercel Serverless Functions) causes the entire database to be wiped whenever containers scale down or cold-start. While sufficient for synthetic demonstration and fault-lab exploration, serverless memory cannot provide loss-proof durability.
+- **Production Remedy**: Deploy the standalone webhook receiver (`receiver/app.py`) on stateful infrastructure with persistent storage volumes (e.g. Docker, VPS, AWS ECS/EKS with mounted EBS volumes) or configure a managed relational backend (PostgreSQL) with connection pooling.

@@ -8,6 +8,7 @@ Must never expose real API keys or allow cross-tenant data leakage.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import os
@@ -284,7 +285,7 @@ async def api_verify_payload(req: VerifyPayloadRequest):
     store = LedgerStore(":memory:")
 
     headers = {"x-signature": req.signature.strip()} if req.signature.strip() else {}
-    res = handle(raw, headers, cfg, store)
+    res = await asyncio.to_thread(handle, raw, headers, cfg, store)
 
     normalized_dict = None
     if res.outcome in ("accepted", "duplicate", "conflict"):
@@ -310,13 +311,11 @@ class SimulationRequest(BaseModel):
     grace_seconds: int = 600
 
 
-@app.post("/api/run-simulation")
-async def api_run_simulation(req: SimulationRequest):
-    """Run seeded synthetic fault simulation and return metrics."""
-    scenarios = generate_call_set(n_calls=min(req.calls, 1000), seed=req.seed)
+def _execute_simulation(calls: int, seed: int, grace_seconds: int) -> dict:
+    scenarios = generate_call_set(n_calls=min(calls, 1000), seed=seed)
     cfg = LedgerConfig(
         webhook_secrets=[DEMO_WEBHOOK_SECRET],
-        analytics_grace_seconds=req.grace_seconds,
+        analytics_grace_seconds=grace_seconds,
     )
     store = LedgerStore(":memory:")
     eval_now = datetime.fromtimestamp(BASE_EPOCH + 3600, tz=timezone.utc)
@@ -326,12 +325,11 @@ async def api_run_simulation(req: SimulationRequest):
             handle(event["body"], event["headers"], cfg, store, now=eval_now)
 
     views = evaluate(store, cfg, eval_now)
-
     completed_count = sum(1 for v in views if v.state == "COMPLETE")
     incomplete_count = len(views) - completed_count
 
     return {
-        "seed": req.seed,
+        "seed": seed,
         "calls": len(scenarios),
         "metrics": _load_latest_metrics(),
         "summary": {
@@ -340,6 +338,12 @@ async def api_run_simulation(req: SimulationRequest):
             "incomplete": incomplete_count,
         },
     }
+
+
+@app.post("/api/run-simulation")
+async def api_run_simulation(req: SimulationRequest):
+    """Run seeded synthetic fault simulation in a threadpool and return metrics."""
+    return await asyncio.to_thread(_execute_simulation, req.calls, req.seed, req.grace_seconds)
 
 
 @app.get("/api/eval-results-json")
@@ -355,13 +359,11 @@ class BackfillMockRequest(BaseModel):
     behavior: str = "success"
 
 
-@app.post("/api/backfill-mock")
-async def api_backfill_mock(req: BackfillMockRequest):
-    """Execute mock API backfill for overdue or at-risk calls."""
+def _execute_mock_backfill(behavior: str) -> dict:
     eval_now = datetime.fromtimestamp(BASE_EPOCH + 3600, tz=timezone.utc)
     tasks = plan(_global_store, _global_config, eval_now)
 
-    client = MockAtomsClient(behavior=req.behavior)
+    client = MockAtomsClient(behavior=behavior)
     results = execute(client, tasks, _global_store, _global_config)
 
     rec = sum(1 for r in results.values() if r == "RECOVERED")
@@ -375,18 +377,26 @@ async def api_backfill_mock(req: BackfillMockRequest):
     }
 
 
+@app.post("/api/backfill-mock")
+async def api_backfill_mock(req: BackfillMockRequest):
+    """Execute mock API backfill for overdue or at-risk calls in a worker thread."""
+    return await asyncio.to_thread(_execute_mock_backfill, req.behavior)
+
+
 @app.post("/webhooks/atoms")
 async def atoms_webhook_receiver(request: Request):
     """Live Atoms webhook ingestion endpoint.
 
     Reads raw unparsed bytes to preserve HMAC signature, enforces persist-before-ack,
     and provides spool fallback in case of database exception.
+    Offloads blocking SQLite operations to worker threadpool via asyncio.to_thread.
     """
     raw_body = await request.body()
     headers = dict(request.headers)
 
     try:
-        result = handle(
+        result = await asyncio.to_thread(
+            handle,
             raw_body,
             headers,
             _global_config,
@@ -405,7 +415,19 @@ async def atoms_webhook_receiver(request: Request):
             media_type="application/json",
         )
     except Exception as exc:
-        # Spool fallback: If unexpected storage failure occurs, spool base64 payload to local file
+        # INVARIANT: Never store unauthenticated bodies to disk or spool.
+        sig_header = headers.get("x-signature") or headers.get("X-Signature")
+        sig_ok, _ = verify_signature(raw_body, sig_header, _global_config.webhook_secrets)
+        if not sig_ok:
+            return Response(
+                content=json.dumps(
+                    {"error": "Invalid signature; unauthenticated payload rejected"}
+                ),
+                status_code=401,
+                media_type="application/json",
+            )
+
+        # Spool fallback: If unexpected storage failure occurs on authenticated delivery, spool to file
         spool_entry = {
             "received_at": datetime.now(timezone.utc).isoformat(),
             "raw_base64": base64.b64encode(raw_body).decode("ascii"),

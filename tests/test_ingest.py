@@ -119,6 +119,31 @@ def test_wrong_secret_rejected() -> None:
     assert result.http_status == 401
 
 
+def test_unauthenticated_requests_are_throttled(monkeypatch) -> None:
+    """Unauthenticated requests are rejected (401), but DB audit writes are throttled to prevent exhaustion."""
+    import atoms_ledger.ingest as ing_mod
+    from atoms_ledger.ingest import _UnauthenticatedWriteLimiter
+
+    limiter = _UnauthenticatedWriteLimiter(limit=3, window_seconds=60.0)
+    monkeypatch.setattr(ing_mod, "_unauth_write_limiter", limiter)
+
+    store = LedgerStore()
+    body = _valid_payload()
+    headers = {"x-signature": "invalid-sig"}
+
+    # First 3 unauthenticated requests are logged to DB
+    for _ in range(3):
+        res = handle(body, headers, _config(), store, _now())
+        assert res.http_status == 401
+    assert len(store._conn.execute("SELECT id FROM deliveries").fetchall()) == 3
+
+    # Subsequent requests are still rejected 401, but do NOT write to DB
+    for _ in range(5):
+        res = handle(body, headers, _config(), store, _now())
+        assert res.http_status == 401
+    assert len(store._conn.execute("SELECT id FROM deliveries").fetchall()) == 3
+
+
 # ---------------------------------------------------------------------------
 # Case-insensitive header lookup
 # ---------------------------------------------------------------------------

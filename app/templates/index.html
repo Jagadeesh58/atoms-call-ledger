@@ -213,9 +213,14 @@
 </head>
 <body>
   <div class="container">
-    <div class="banner">
-      <span>⚠️ DEMO MODE — synthetic data. Do not paste real customer data into this public app.</span>
-      <span class="badge badge-construction">MODE: {{ mode_label }}</span>
+    <div class="banner" style="display: block; line-height: 1.4;">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+        <span><strong>⚠️ EPHEMERAL DEMO SANDBOX</strong> — Runs on Vercel Serverless with in-memory SQLite (<code>:memory:</code>).</span>
+        <span class="badge badge-construction">SANDBOX: {{ mode_label }}</span>
+      </div>
+      <div style="font-size: 0.8rem; opacity: 0.9;">
+        Serverless containers recycle memory on cold start. Production loss-proof deployments require persistent disk (e.g. Docker/VPS/ECS with durable volumes, or PostgreSQL backend).
+      </div>
     </div>
 
     <header>

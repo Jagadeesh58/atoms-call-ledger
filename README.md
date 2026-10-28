@@ -103,6 +103,7 @@ For comprehensive component descriptions, dataflow diagrams, and scale failure a
 
 ## Honest Limitations
 
+- **Vercel Demo vs Production Durability**: The live web console runs on Vercel as an **ephemeral sandbox** using in-memory SQLite (`:memory:`). Serverless functions wipe in-memory state on cold starts. Production "loss-proof" durability requires deploying the standalone receiver (`receiver/app.py`) on stateful infrastructure with persistent storage (Docker, VPS, ECS/EKS with EBS, or PostgreSQL backend).
 - **Storage Concurrency**: Built with SQLite stdlib. Under production concurrency (>150 req/sec), SQLite database-level write locks will saturate. Swap to PostgreSQL with identical schemas for high load.
 - **Single-Region Exposure**: If an entire cloud region suffers an outage longer than your ZDR window (e.g. 1 hour), backfill cannot rescue purged data. Deploy multi-region active-active ingress.
 - **Presigned URLs**: Recording URLs returned by Atoms expire in 15 minutes and are never cached by the ledger.

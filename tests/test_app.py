@@ -21,7 +21,8 @@ def test_index_page():
     resp = client.get("/")
     assert resp.status_code == 200
     assert "Atoms Call Ledger" in resp.text
-    assert "DEMO MODE" in resp.text
+    assert "DEMO" in resp.text
+    assert "EPHEMERAL" in resp.text
 
 
 def test_compute_signature_api():

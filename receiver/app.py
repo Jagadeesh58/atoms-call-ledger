@@ -18,6 +18,7 @@ Spool policy:
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import logging
@@ -30,6 +31,7 @@ from fastapi import FastAPI, Request, Response
 
 from atoms_ledger.config import DEMO_WEBHOOK_SECRET, LedgerConfig
 from atoms_ledger.ingest import handle
+from atoms_ledger.signature import verify_signature
 from atoms_ledger.store import LedgerStore
 
 logger = logging.getLogger("atoms_receiver")
@@ -94,7 +96,8 @@ async def receive_webhook(request: Request):
     headers = dict(request.headers)
 
     try:
-        result = handle(raw_body, headers, config, store)
+        # Offload blocking SQLite ingestion to worker threadpool
+        result = await asyncio.to_thread(handle, raw_body, headers, config, store)
         return Response(
             content=json.dumps(
                 {
@@ -108,7 +111,27 @@ async def receive_webhook(request: Request):
             media_type="application/json",
         )
     except Exception as exc:
-        logger.critical("Receiver database ingestion error; spooling raw delivery: %s", exc)
+        # INVARIANT: Never store unauthenticated bodies to disk or spool.
+        # Verify HMAC signature BEFORE spooling raw bytes to prevent disk pollution.
+        sig_header = headers.get("x-signature") or headers.get("X-Signature")
+        sig_ok, _ = verify_signature(raw_body, sig_header, config.webhook_secrets)
+        if not sig_ok:
+            logger.warning(
+                "Ingestion exception occurred, but signature is invalid; unauthenticated bytes rejected and NOT spooled: %s",
+                exc,
+            )
+            return Response(
+                content=json.dumps(
+                    {"error": "Invalid signature; unauthenticated payload rejected"}
+                ),
+                status_code=401,
+                media_type="application/json",
+            )
+
+        logger.critical(
+            "Receiver database ingestion error on authenticated payload; spooling raw delivery: %s",
+            exc,
+        )
         entry = {
             "spooled_at": datetime.now(timezone.utc).isoformat(),
             "raw_base64": base64.b64encode(raw_body).decode("ascii"),
@@ -123,7 +146,10 @@ async def receive_webhook(request: Request):
 
         return Response(
             content=json.dumps(
-                {"error": "Storage failure; payload spooled for replay", "detail": str(exc)}
+                {
+                    "error": "Storage failure; authenticated payload spooled for replay",
+                    "detail": str(exc),
+                }
             ),
             status_code=503,
             media_type="application/json",

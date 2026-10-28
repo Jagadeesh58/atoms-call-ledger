@@ -77,15 +77,38 @@ def test_receiver_spool_fallback(monkeypatch, tmp_path):
     monkeypatch.setattr(rec_mod, "handle", broken_handle)
 
     body = b'{"important":"data"}'
+    valid_sig = compute_signature(body, DEMO_WEBHOOK_SECRET)
     resp = client.post(
         "/webhooks/atoms",
         content=body,
-        headers={"x-signature": "some-sig", "content-type": "application/json"},
+        headers={"x-signature": valid_sig, "content-type": "application/json"},
     )
     assert resp.status_code == 503
     assert spool_path.exists()
     content = spool_path.read_text(encoding="utf-8")
     assert "Simulated database failure" in content
+
+
+def test_receiver_spool_refuses_unauthenticated(monkeypatch, tmp_path):
+    """When store fails, unauthenticated payloads must NEVER be spooled (invariant enforcement)."""
+    spool_path = tmp_path / "spool_unauth.jsonl"
+    monkeypatch.setattr("receiver.app.spool_file", spool_path)
+
+    import receiver.app as rec_mod
+
+    def broken_handle(*args, **kwargs):
+        raise RuntimeError("Simulated database failure")
+
+    monkeypatch.setattr(rec_mod, "handle", broken_handle)
+
+    body = b'{"unauthenticated":"attack"}'
+    resp = client.post(
+        "/webhooks/atoms",
+        content=body,
+        headers={"x-signature": "bad-signature", "content-type": "application/json"},
+    )
+    assert resp.status_code == 401
+    assert not spool_path.exists()
 
 
 def test_receiver_fails_closed_without_secrets(monkeypatch):

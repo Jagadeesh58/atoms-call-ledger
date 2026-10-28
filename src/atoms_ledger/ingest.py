@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import threading
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -24,6 +25,33 @@ logger = logging.getLogger(__name__)
 
 _CALL_ID_FIELDS = ("callId", "call_id")
 _EVENT_TYPE_FIELDS = ("eventType", "event_type", "type")
+
+
+class _UnauthenticatedWriteLimiter:
+    """Thread-safe sliding-window rate limiter for unauthenticated DB audit writes.
+
+    Protects SQLite from write-lock starvation and disk space exhaustion during
+    DDoS or credential-stuffing attacks. Unauthenticated requests are always rejected (401),
+    but audit writes to SQLite are throttled to a configurable rate.
+    """
+
+    def __init__(self, limit: int = 120, window_seconds: float = 60.0) -> None:
+        self.limit = limit
+        self.window_seconds = window_seconds
+        self._lock = threading.Lock()
+        self._timestamps: list[float] = []
+
+    def allow(self, now_ts: float) -> bool:
+        cutoff = now_ts - self.window_seconds
+        with self._lock:
+            self._timestamps = [ts for ts in self._timestamps if ts > cutoff]
+            if len(self._timestamps) >= self.limit:
+                return False
+            self._timestamps.append(now_ts)
+            return True
+
+
+_unauth_write_limiter = _UnauthenticatedWriteLimiter()
 
 
 def _sha256_hex(data: bytes) -> str:
@@ -114,19 +142,24 @@ def handle(
     sig_ok_bool, reason = verify_signature(raw_bytes, sig_header, config.webhook_secrets)
 
     if not sig_ok_bool:
-        # Persist delivery record WITHOUT raw bytes (sig_ok=0)
-        store.ingest_delivery_atomic(
-            received_at=received_at,
-            raw_bytes_or_none=None,
-            sha256=_sha256_hex(raw_bytes),
-            sig_ok=0,
-            call_id=None,
-            event_type=None,
-            delivery_id=None,
-            normalized_json=None,
-            outcome="rejected_signature",
-            note=reason,
-        )
+        # Reject immediately. Throttle audit writes to SQLite to prevent lock exhaustion.
+        if _unauth_write_limiter.allow(now.timestamp()):
+            store.ingest_delivery_atomic(
+                received_at=received_at,
+                raw_bytes_or_none=None,
+                sha256=_sha256_hex(raw_bytes),
+                sig_ok=0,
+                call_id=None,
+                event_type=None,
+                delivery_id=None,
+                normalized_json=None,
+                outcome="rejected_signature",
+                note=reason,
+            )
+        else:
+            logger.warning(
+                "Unauthenticated delivery write dropped by rate limiter (DDoS protection)"
+            )
         return IngestResult(outcome="rejected_signature", http_status=401)
 
     # ------------------------------------------------------------------
