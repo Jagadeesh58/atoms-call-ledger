@@ -1,0 +1,641 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Atoms Call Ledger — Loss-Proof Webhook Ingestion & Reconciliation</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --card-bg: #1e293b;
+      --border: #334155;
+      --text: #f8fafc;
+      --text-muted: #94a3b8;
+      --primary: #38bdf8;
+      --primary-hover: #0284c7;
+      --success: #34d399;
+      --warning: #fbbf24;
+      --danger: #f87171;
+      --badge-bg: #334155;
+      --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    }
+    @media (prefers-color-scheme: light) {
+      :root {
+        --bg: #f8fafc;
+        --card-bg: #ffffff;
+        --border: #e2e8f0;
+        --text: #0f172a;
+        --text-muted: #64748b;
+        --primary: #0284c7;
+        --primary-hover: #0369a1;
+        --success: #059669;
+        --warning: #d97706;
+        --danger: #dc2626;
+        --badge-bg: #e2e8f0;
+      }
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: var(--font-sans);
+      background-color: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      min-height: 100vh;
+    }
+    .container {
+      width: 100%;
+      max-width: 900px;
+      padding: 16px;
+    }
+    .banner {
+      background-color: rgba(251, 191, 36, 0.15);
+      border: 1px solid var(--warning);
+      color: var(--warning);
+      padding: 10px 14px;
+      border-radius: 6px;
+      font-size: 0.85rem;
+      font-weight: 500;
+      margin-bottom: 16px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    header {
+      margin-bottom: 20px;
+    }
+    h1 { font-size: 1.5rem; font-weight: 700; margin-bottom: 6px; }
+    p.subtitle { color: var(--text-muted); font-size: 0.9rem; }
+    .nav-tabs {
+      display: flex;
+      gap: 6px;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 20px;
+      overflow-x: auto;
+      padding-bottom: 2px;
+    }
+    .tab-btn {
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      padding: 8px 14px;
+      font-size: 0.9rem;
+      font-weight: 500;
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+      white-space: nowrap;
+    }
+    .tab-btn.active {
+      color: var(--primary);
+      border-bottom-color: var(--primary);
+    }
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
+    .card {
+      background-color: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 16px;
+      margin-bottom: 16px;
+    }
+    .card h2 { font-size: 1.15rem; margin-bottom: 12px; }
+    .card h3 { font-size: 0.95rem; margin-top: 12px; margin-bottom: 6px; }
+    .strip {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 12px;
+      margin: 16px 0;
+    }
+    .strip-box {
+      background: rgba(56, 189, 248, 0.08);
+      border: 1px solid var(--border);
+      padding: 14px;
+      border-radius: 6px;
+    }
+    .strip-box h4 { font-size: 0.95rem; color: var(--primary); margin-bottom: 6px; }
+    .strip-box p { font-size: 0.85rem; color: var(--text-muted); }
+    .badge {
+      display: inline-block;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 0.75rem;
+      font-family: var(--font-mono);
+      font-weight: 600;
+    }
+    .badge-fact { background: #0284c7; color: white; }
+    .badge-risk { background: #b91c1c; color: white; }
+    .badge-infer { background: #6b21a8; color: white; }
+    .badge-unval { background: #d97706; color: white; }
+    .badge-construction { background: #475569; color: #cbd5e1; }
+    .badge-ok { background: var(--success); color: black; }
+    .badge-crit { background: var(--danger); color: white; }
+    .badge-warn { background: var(--warning); color: black; }
+    .form-group { margin-bottom: 12px; }
+    label { display: block; font-size: 0.85rem; font-weight: 500; margin-bottom: 4px; }
+    input[type="text"], input[type="number"], select, textarea {
+      width: 100%;
+      padding: 8px 10px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text);
+      font-family: var(--font-sans);
+      font-size: 0.9rem;
+    }
+    textarea { font-family: var(--font-mono); font-size: 0.8rem; resize: vertical; }
+    .btn {
+      background-color: var(--primary);
+      color: #0f172a;
+      border: none;
+      padding: 8px 16px;
+      font-size: 0.9rem;
+      font-weight: 600;
+      border-radius: 6px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .btn:hover { background-color: var(--primary-hover); }
+    .btn-secondary {
+      background-color: var(--badge-bg);
+      color: var(--text);
+    }
+    .btn-secondary:hover { opacity: 0.85; }
+    .btn-group { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.85rem;
+      margin-top: 10px;
+    }
+    th, td {
+      border: 1px solid var(--border);
+      padding: 8px 10px;
+      text-align: left;
+    }
+    th { background: rgba(51, 65, 85, 0.4); font-weight: 600; }
+    .verdict-box {
+      margin-top: 12px;
+      padding: 12px;
+      border-radius: 6px;
+      font-family: var(--font-mono);
+      font-size: 0.85rem;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+    .verdict-success { background: rgba(52, 211, 153, 0.15); border: 1px solid var(--success); }
+    .verdict-danger { background: rgba(248, 113, 113, 0.15); border: 1px solid var(--danger); }
+    .timeline {
+      margin-top: 10px;
+      border-left: 2px solid var(--primary);
+      padding-left: 12px;
+    }
+    .timeline-item {
+      margin-bottom: 10px;
+      font-size: 0.85rem;
+    }
+    .timeline-time { color: var(--text-muted); font-size: 0.75rem; }
+    footer {
+      margin-top: 40px;
+      margin-bottom: 20px;
+      text-align: center;
+      font-size: 0.8rem;
+      color: var(--text-muted);
+    }
+    footer a { color: var(--primary); text-decoration: none; }
+    footer a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="banner">
+      <span>⚠️ DEMO MODE — synthetic data. Do not paste real customer data into this public app.</span>
+      <span class="badge badge-construction">MODE: {{ mode_label }}</span>
+    </div>
+
+    <header>
+      <h1>Atoms Call Ledger</h1>
+      <p class="subtitle">Loss-proof webhook ingestion & deadline-aware reconciliation for Smallest.ai Atoms voice calls.</p>
+    </header>
+
+    <nav class="nav-tabs">
+      <button class="tab-btn active" onclick="switchTab('why')">Why</button>
+      <button class="tab-btn" onclick="switchTab('fault-lab')">Fault Lab</button>
+      <button class="tab-btn" onclick="switchTab('ledger')">Ledger</button>
+      <button class="tab-btn" onclick="switchTab('payload')">Try a Payload</button>
+      <button class="tab-btn" onclick="switchTab('evidence')">Evidence</button>
+    </nav>
+
+    <!-- TAB 1: WHY -->
+    <div id="tab-why" class="tab-content active">
+      <div class="card">
+        <h2>The Core Problem</h2>
+        <div class="strip">
+          <div class="strip-box">
+            <h4>1. No Platform Retries</h4>
+            <p>Atoms webhooks do not retry on 5xx or network drops. Failed deliveries are logged <code>FAILED</code> and the event is dropped forever.</p>
+          </div>
+          <div class="strip-box">
+            <h4>2. Raw-Byte HMAC</h4>
+            <p>Authenticity relies entirely on <code>X-Signature</code> computed over raw request bytes. Re-serializing JSON breaks the signature.</p>
+          </div>
+          <div class="strip-box">
+            <h4>3. ZDR Deletion Window</h4>
+            <p>Under Enterprise Zero Data Retention (1h to 30d), call records are irrevocably deleted once the window elapses. Webhooks are your copy.</p>
+          </div>
+        </div>
+
+        <h3>Five Confirmed Operational Realities</h3>
+        <ul style="padding-left: 20px; font-size: 0.88rem; margin-top: 8px; line-height: 1.7;">
+          <li><span class="badge badge-fact">CONFIRMED FACT</span> Three events fire per call (<code>pre-conversation</code>, <code>post-conversation</code>, <code>analytics-completed</code>), joined by <code>callId</code>.</li>
+          <li><span class="badge badge-fact">CONFIRMED FACT</span> Delivery timeout is 30s. Atoms does not retry failed deliveries (<a href="https://docs.smallest.ai/voice-agents/integrate/webhooks.md" target="_blank" style="color:var(--primary)">official docs</a>).</li>
+          <li><span class="badge badge-fact">CONFIRMED FACT</span> No static egress IPs exist; authenticity depends on <code>X-Signature</code> HMAC-SHA256 over raw unparsed request bytes.</li>
+          <li><span class="badge badge-infer">REASONABLE INFERENCE</span> No timestamp exists in the signature; replay protection must be handled at the application layer via idempotency on <code>(callId, eventType)</code>.</li>
+          <li><span class="badge badge-fact">CONFIRMED FACT</span> Under Zero Data Retention, unrecovered transcripts and recordings cannot be recovered once the retention window expires.</li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- TAB 2: FAULT LAB -->
+    <div id="tab-fault-lab" class="tab-content">
+      <div class="card">
+        <h2>Synthetic Fault Suite</h2>
+        <p style="font-size:0.85rem; color:var(--text-muted); margin-bottom: 12px;">
+          Benchmark the Ledger against a Naive Baseline over seeded fault injections (tampered payloads, dropped events, duplicates, out-of-order deliveries).
+        </p>
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px;">
+          <div class="form-group">
+            <label>Random Seed</label>
+            <input type="number" id="sim-seed" value="7" min="1" max="99999">
+          </div>
+          <div class="form-group">
+            <label>Calls to Simulate</label>
+            <input type="number" id="sim-calls" value="1000" min="50" max="2000" step="50">
+          </div>
+          <div class="form-group">
+            <label>Grace Period (seconds)</label>
+            <input type="number" id="sim-grace" value="600" min="60" max="3600" step="60">
+          </div>
+        </div>
+        <div class="btn-group">
+          <button class="btn" onclick="runSimulation()" id="sim-run-btn">Run Simulation</button>
+          <button class="btn btn-secondary" onclick="downloadEvalJSON()">Download Results JSON</button>
+        </div>
+      </div>
+
+      <div class="card" id="sim-results-card">
+        <h2>Comparison Metrics: Ledger vs Naive Baseline</h2>
+        <table id="sim-table">
+          <thead>
+            <tr>
+              <th>Metric</th>
+              <th>Ledger</th>
+              <th>Naive Baseline</th>
+              <th>Notes</th>
+            </tr>
+          </thead>
+          <tbody id="sim-table-body">
+            <!-- Dynamically populated or rendered from latest.json -->
+            {% for m_id, row in default_metrics.items() %}
+            <tr>
+              <td><strong>{{ m_id }}</strong>: {{ row.label }}</td>
+              <td>{{ row.ledger_val }}</td>
+              <td>{{ row.baseline_val }}</td>
+              <td>{% if row.by_construction %}<span class="badge badge-construction">by-construction</span>{% endif %}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- TAB 3: LEDGER -->
+    <div id="tab-ledger" class="tab-content">
+      <div class="card">
+        <h2>Live Call Ledger</h2>
+        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom: 12px;">
+          <div style="display:flex; gap:8px;">
+            <select id="filter-state" onchange="filterCalls()">
+              <option value="">All States</option>
+              <option value="COMPLETE">COMPLETE</option>
+              <option value="IN_PROGRESS">IN_PROGRESS</option>
+              <option value="AWAITING_ANALYTICS">AWAITING_ANALYTICS</option>
+              <option value="OVERDUE_ANALYTICS">OVERDUE_ANALYTICS</option>
+              <option value="OVERDUE_POST">OVERDUE_POST</option>
+              <option value="QUARANTINED_ONLY">QUARANTINED_ONLY</option>
+            </select>
+            <select id="filter-risk" onchange="filterCalls()">
+              <option value="">All Risk Tiers</option>
+              <option value="OK">OK</option>
+              <option value="WARNING">WARNING</option>
+              <option value="CRITICAL">CRITICAL</option>
+              <option value="EXPIRED">EXPIRED</option>
+            </select>
+          </div>
+          <div style="display:flex; gap:6px;">
+            <select id="mock-behavior">
+              <option value="success">MOCK: Success (Recover)</option>
+              <option value="not_found">MOCK: 404 (Unrecoverable)</option>
+              <option value="timeout">MOCK: Timeout (Retry Later)</option>
+              <option value="rate_limit">MOCK: 429 Rate Limit</option>
+              <option value="auth_error">MOCK: 401 Auth Error</option>
+            </select>
+            <button class="btn btn-secondary" onclick="runMockBackfill()">Run Backfill (MOCK)</button>
+          </div>
+        </div>
+
+        <table id="ledger-calls-table">
+          <thead>
+            <tr>
+              <th>Call ID</th>
+              <th>State</th>
+              <th>Risk Tier</th>
+              <th>Deadline</th>
+              <th>Events</th>
+              <th>Flags</th>
+            </tr>
+          </thead>
+          <tbody id="ledger-calls-body">
+            {% for call in initial_calls %}
+            <tr onclick="showCallDetail('{{ call.call_id }}')" style="cursor:pointer;">
+              <td><code>{{ call.call_id }}</code></td>
+              <td><span class="badge {% if call.state == 'COMPLETE' %}badge-ok{% else %}badge-warn{% endif %}">{{ call.state }}</span></td>
+              <td><span class="badge {% if call.risk_tier == 'CRITICAL' or call.risk_tier == 'EXPIRED' %}badge-crit{% elif call.risk_tier == 'WARNING' %}badge-warn{% else %}badge-ok{% endif %}">{{ call.risk_tier }}</span></td>
+              <td>{{ call.remaining_formatted }}</td>
+              <td>{{ call.events_received | join(", ") }}</td>
+              <td>{{ call.flags | join(", ") }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+
+        <div id="call-detail-modal" class="card" style="display:none; margin-top:16px; border:1px solid var(--primary);">
+          <h3>Call Timeline & Diagnostics: <span id="detail-call-id"></span></h3>
+          <div id="detail-content" class="timeline"></div>
+          <button class="btn btn-secondary" style="margin-top:10px;" onclick="closeCallDetail()">Close Details</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB 4: TRY A PAYLOAD -->
+    <div id="tab-payload" class="tab-content">
+      <div class="card">
+        <h2>Payload Verifier & Raw-Bytes Proof</h2>
+        <p style="font-size:0.85rem; color:var(--text-muted); margin-bottom:12px;">
+          Test HMAC-SHA256 signature verification over raw unparsed request bytes and test field normalization.
+        </p>
+
+        <div class="form-group">
+          <label>Webhook Secret</label>
+          <input type="text" id="payload-secret" value="demo-secret-not-a-real-secret">
+        </div>
+
+        <div class="form-group">
+          <label>Raw JSON Request Body</label>
+          <textarea id="payload-body" rows="9">{
+  "event": "agent_recruitment.post-conversation",
+  "id": "deliv-demo-001",
+  "metadata": {
+    "agentId": "agent_recruitment",
+    "eventType": "post-conversation",
+    "conversationType": "telephonyOutbound",
+    "callId": "CALL-1729000000000-a1b2c3",
+    "toNumber": "+910000001234",
+    "fromNumber": "+910000005678",
+    "callStatus": "no-answer",
+    "callDuration": 45,
+    "answeredAt": "2026-10-28T10:00:00Z",
+    "endedAt": "2026-10-28T10:00:45Z",
+    "transcript": [
+      {"role": "agent", "content": "नमस्ते! We are calling regarding your application.", "timestamp": 1.0}
+    ],
+    "variables": {
+      "candidate_id": 9876,
+      "notice_period_days": 30
+    }
+  }
+}</textarea>
+        </div>
+
+        <div class="form-group">
+          <label>X-Signature Header (Hexadecimal)</label>
+          <input type="text" id="payload-sig" placeholder="Paste X-Signature or click 'Sign for me'">
+        </div>
+
+        <div class="btn-group">
+          <button class="btn" onclick="verifyPayload()">Verify & Ingest</button>
+          <button class="btn btn-secondary" onclick="signPayload()">Sign for me (Demo Secret)</button>
+          <button class="btn btn-secondary" onclick="reserializePayload()">Re-serialize JSON & Break Signature</button>
+        </div>
+
+        <div id="payload-verdict" style="display:none;" class="verdict-box"></div>
+      </div>
+    </div>
+
+    <!-- TAB 5: EVIDENCE -->
+    <div id="tab-evidence" class="tab-content">
+      <div class="card">
+        <h2>Evidence Register & Documented Guarantees</h2>
+        <p style="font-size:0.85rem; color:var(--text-muted); margin-bottom:12px;">
+          Every claim in this system is backed by public official documentation or transparently classified.
+        </p>
+        <table>
+          <thead>
+            <tr>
+              <th>Classification</th>
+              <th>Sourced Claim / Invariant</th>
+              <th>Source & Context</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><span class="badge badge-fact">CONFIRMED FACT</span></td>
+              <td>Three webhook events fire per call; joined by <code>callId</code>. Delivery timeout 30s. Atoms does not retry.</td>
+              <td><a href="https://docs.smallest.ai/voice-agents/integrate/webhooks.md" target="_blank" style="color:var(--primary)">Smallest.ai Webhook Docs</a></td>
+            </tr>
+            <tr>
+              <td><span class="badge badge-fact">CONFIRMED FACT</span></td>
+              <td>Signature is HMAC-SHA256 (hex) over the <strong>raw request body bytes</strong>; do not re-serialize.</td>
+              <td><a href="https://docs.smallest.ai/voice-agents/integrate/webhooks.md" target="_blank" style="color:var(--primary)">Smallest.ai Webhook Docs</a></td>
+            </tr>
+            <tr>
+              <td><span class="badge badge-fact">CONFIRMED FACT</span></td>
+              <td>Zero Data Retention purges recordings and transcripts after webhooks deliver or window ends (1h–30d).</td>
+              <td><a href="https://docs.smallest.ai/overview/administration/zero-data-retention.md" target="_blank" style="color:var(--primary)">Smallest.ai ZDR Docs</a></td>
+            </tr>
+            <tr>
+              <td><span class="badge badge-fact">CONFIRMED FACT</span></td>
+              <td>Inconsistencies: <code>toPhone</code> vs <code>toNumber</code>; <code>no-answer</code> vs <code>no_answer</code>; <code>conversationType</code> camelCase vs snake_case.</td>
+              <td><a href="https://docs.smallest.ai/voice-agents/developer-guide/operate/analytics/call-metrics.md" target="_blank" style="color:var(--primary)">Smallest.ai Call Metrics</a></td>
+            </tr>
+            <tr>
+              <td><span class="badge badge-infer">REASONABLE INFERENCE</span></td>
+              <td>Retell fails by duplicating (retries 3x); Atoms documented model fails by dropping (no retry). Receiver must reconcile & backfill.</td>
+              <td>Platform architectural comparison</td>
+            </tr>
+            <tr>
+              <td><span class="badge badge-unval">UNVALIDATED HYPOTHESIS</span></td>
+              <td>Whether <code>analytics-completed</code> fires for non-completed calls (e.g. <code>no-answer</code>). Configurable; default assumes not required.</td>
+              <td>Empirical testing candidate</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <footer>
+      Independent open-source project by <a href="https://github.com/Jagadeesh58/atoms-call-ledger" target="_blank">Jagadeesh58</a>. Not affiliated with Smallest.ai.
+    </footer>
+  </div>
+
+  <script>
+    function switchTab(tabId) {
+      document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+      document.querySelectorAll('.tab-content').forEach(tab => tab.classList.remove('active'));
+      event.target.classList.add('active');
+      document.getElementById('tab-' + tabId).classList.add('active');
+    }
+
+    async function runSimulation() {
+      const btn = document.getElementById('sim-run-btn');
+      btn.innerText = 'Simulating...';
+      btn.disabled = true;
+      try {
+        const seed = document.getElementById('sim-seed').value;
+        const calls = document.getElementById('sim-calls').value;
+        const grace = document.getElementById('sim-grace').value;
+        const resp = await fetch('/api/run-simulation', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({seed: parseInt(seed), calls: parseInt(calls), grace_seconds: parseInt(grace)})
+        });
+        const data = await resp.json();
+        renderSimulationTable(data);
+      } catch (err) {
+        alert('Simulation failed: ' + err.message);
+      } finally {
+        btn.innerText = 'Run Simulation';
+        btn.disabled = false;
+      }
+    }
+
+    function renderSimulationTable(data) {
+      const tbody = document.getElementById('sim-table-body');
+      tbody.innerHTML = '';
+      for (const [mId, row] of Object.entries(data.metrics)) {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td><strong>${mId}</strong>: ${row.label}</td>
+          <td>${row.ledger_val}</td>
+          <td>${row.baseline_val}</td>
+          <td>${row.by_construction ? '<span class="badge badge-construction">by-construction</span>' : ''}</td>
+        `;
+        tbody.appendChild(tr);
+      }
+    }
+
+    function downloadEvalJSON() {
+      window.location.href = '/api/eval-results-json';
+    }
+
+    async function signPayload() {
+      const secret = document.getElementById('payload-secret').value;
+      const body = document.getElementById('payload-body').value;
+      const resp = await fetch('/api/compute-signature', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({secret, body})
+      });
+      const data = await resp.json();
+      document.getElementById('payload-sig').value = data.signature;
+    }
+
+    async function reserializePayload() {
+      const secret = document.getElementById('payload-secret').value;
+      const body = document.getElementById('payload-body').value;
+      const sig = document.getElementById('payload-sig').value;
+      const resp = await fetch('/api/reserialize-payload', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({secret, body, signature: sig})
+      });
+      const data = await resp.json();
+      const verdict = document.getElementById('payload-verdict');
+      verdict.style.display = 'block';
+      verdict.className = 'verdict-box ' + (data.verified ? 'verdict-success' : 'verdict-danger');
+      verdict.innerHTML = `<strong>Demonstration Result:</strong>\n${data.message}\n\nOriginal Sig: ${data.original_sig}\nReserialized Hash: ${data.reserialized_sig}`;
+    }
+
+    async function verifyPayload() {
+      const secret = document.getElementById('payload-secret').value;
+      const body = document.getElementById('payload-body').value;
+      const sig = document.getElementById('payload-sig').value;
+      const resp = await fetch('/api/verify-payload', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({secret, body, signature: sig})
+      });
+      const data = await resp.json();
+      const verdict = document.getElementById('payload-verdict');
+      verdict.style.display = 'block';
+      verdict.className = 'verdict-box ' + (data.outcome === 'accepted' ? 'verdict-success' : 'verdict-danger');
+      verdict.innerHTML = `<strong>Outcome:</strong> ${data.outcome} (HTTP ${data.http_status})\n` +
+                          `<strong>Call ID:</strong> ${data.call_id || 'None'}\n` +
+                          `<strong>Event:</strong> ${data.event_type || 'None'}\n` +
+                          `<strong>Anomalies:</strong> ${data.anomalies.join(', ') || 'None'}\n` +
+                          (data.normalized ? `\n<strong>Normalized Data:</strong>\n${JSON.stringify(data.normalized, null, 2)}` : '');
+    }
+
+    async function runMockBackfill() {
+      const behavior = document.getElementById('mock-behavior').value;
+      const resp = await fetch('/api/backfill-mock', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({behavior})
+      });
+      const data = await resp.json();
+      alert(`MOCK Backfill executed: ${data.recovered_count} recovered, ${data.unrecoverable_count} unrecoverable.`);
+      location.reload();
+    }
+
+    function showCallDetail(callId) {
+      document.getElementById('call-detail-modal').style.display = 'block';
+      document.getElementById('detail-call-id').innerText = callId;
+      document.getElementById('detail-content').innerHTML = `
+        <div class="timeline-item">
+          <strong>pre-conversation</strong> received <span class="timeline-time">(T+0s)</span>
+          <br>Hash: <code>a8f5b4c1...</code> | Direction: <code>outbound</code> | From: <code>+910000005678</code>
+        </div>
+        <div class="timeline-item">
+          <strong>post-conversation</strong> received <span class="timeline-time">(T+45s)</span>
+          <br>Hash: <code>91e3d7a2...</code> | Status: <code>no_answer</code> | Normalized: <code>no-answer -> no_answer</code>
+        </div>
+        <div class="timeline-item">
+          <strong>ZDR Retention Deadline</strong>: 86,355s remaining (Risk Tier: <span class="badge badge-ok">OK</span>)
+        </div>
+      `;
+    }
+
+    function closeCallDetail() {
+      document.getElementById('call-detail-modal').style.display = 'none';
+    }
+
+    function filterCalls() {
+      const state = document.getElementById('filter-state').value;
+      const risk = document.getElementById('filter-risk').value;
+      const rows = document.querySelectorAll('#ledger-calls-body tr');
+      rows.forEach(r => {
+        const text = r.innerText;
+        const stateMatch = !state || text.includes(state);
+        const riskMatch = !risk || text.includes(risk);
+        r.style.display = (stateMatch && riskMatch) ? '' : 'none';
+      });
+    }
+  </script>
+</body>
+</html>
